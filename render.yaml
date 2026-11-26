@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: jogo-multiplayer
+    name: fdp-cyber-noir
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
