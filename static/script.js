@@ -114,13 +114,15 @@
   }
 
   function copyInviteLink() {
+    if (!state) return;
     const url = getInviteUrl();
     navigator.clipboard.writeText(url)
       .then(() => showToast("🔗 Link da sala copiado! Mande no grupo."))
-      .catch(() => showToast(`Código da sala: ${state?.room_code}`));
+      .catch(() => showToast(`Código da sala: ${state.room_code}`));
   }
 
   function shareWhatsApp() {
+    if (!state) return;
     const url = getInviteUrl();
     const text = encodeURIComponent(`🔥 Bora jogar FDP (Foi De Propósito) +18!\nEntra na sala ${state.room_code} pelo celular:\n${url}`);
     window.open(`https://wa.me/?text=${text}`, "_blank");
@@ -275,7 +277,8 @@
     customWildTexts[String(editingWildIdx)] = txt;
     if (!selectedIndices.includes(editingWildIdx)) {
       const pick = state.current_black_card?.pick || 1;
-      if (selectedIndices.length < pick) selectedIndices.push(editingWildIdx);
+      if (selectedIndices.length >= pick) selectedIndices.shift();
+      selectedIndices.push(editingWildIdx);
     }
     editingWildIdx = null;
     $("modal-wildcard").classList.add("hidden");
