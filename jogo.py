@@ -227,6 +227,9 @@ class FDPRoom:
             self.timer_active = False
             self.submissions = []
             self.current_black_card = None
+            if self.rando_player and "BOT_RANDO" in self.players:
+                del self.players["BOT_RANDO"]
+                self.rando_player = None
             return True
 
         # Se o juiz saiu durante a rodada, avança ou redefine
@@ -474,7 +477,7 @@ class FDPRoom:
         custom_texts = custom_texts or {}
         chosen_cards = []
         for idx in card_indices:
-            if not isinstance(idx, int) or idx < 0 or idx >= len(player.hand):
+            if type(idx) is not int or idx < 0 or idx >= len(player.hand):
                 return False, "Índice de carta inválido."
             raw_card = player.hand[idx]
             if raw_card == WILDCARD_TOKEN:
@@ -592,7 +595,10 @@ class FDPRoom:
             self.start_next_round()
             return
         max_votes = max(len(s["votes"]) for s in self.submissions)
-        winners = [s for s in self.submissions if len(s["votes"]) == max_votes]
+        if max_votes == 0:
+            winners = [random.choice(self.submissions)]
+        else:
+            winners = [s for s in self.submissions if len(s["votes"]) == max_votes]
         self._finalize_round(winners)
 
     def _finalize_round(self, winner_entries):
@@ -669,7 +675,7 @@ class FDPRoom:
             return False, "Selecione ao menos uma carta para trocar."
 
         valid_idxs = sorted(
-            {i for i in card_indices if isinstance(i, int) and 0 <= i < len(player.hand)},
+            {i for i in card_indices if type(i) is int and 0 <= i < len(player.hand)},
             reverse=True,
         )
         if not valid_idxs:
@@ -826,7 +832,7 @@ class FDPRoom:
             "judge_avatar": judge_player.avatar if judge_player else None,
             "current_black_card": self.current_black_card,
             "submissions": public_submissions,
-            "submissions_count": len(self.submissions),
+            "submissions_count": sum(1 for s in self.submissions if not s["is_bet"]),
             "expected_submissions": len(self._expected_submitters()) + (1 if self._uses_rando() else 0),
             "bet_pot": self.bet_pot,
             "timer_remaining": self.timer_remaining,
