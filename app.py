@@ -3,6 +3,14 @@
 Servidor Flask + Flask-SocketIO para FDP: Edição Cyber-Noir Multiplayer.
 """
 
+# Patch do gevent deve ocorrer antes dos demais imports
+try:
+    from gevent import monkey
+    monkey.patch_all()
+    ASYNC_MODE = "gevent"
+except ImportError:
+    ASYNC_MODE = "threading"
+
 import os
 import time
 from flask import Flask, render_template, jsonify, request
@@ -15,13 +23,6 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "fdp-cyber-noir-secret-2026")
 
-# Detecta gevent automaticamente em produção (Render/Gunicorn)
-try:
-    import gevent  # noqa: F401
-    ASYNC_MODE = "gevent"
-except ImportError:
-    ASYNC_MODE = "threading"
-
 socketio = SocketIO(
     app,
     async_mode=ASYNC_MODE,
@@ -30,7 +31,7 @@ socketio = SocketIO(
     ping_interval=25,
 )
 
-# Armazenamento em memória das salas ativas
+# Armazenamento em memória das salas ativas (requer -w 1 no Gunicorn)
 rooms = {}           # room_code -> FDPRoom
 sid_to_session = {}  # sid -> {"room_code": str, "token": str}
 timer_task_started = False
@@ -60,6 +61,29 @@ def cleanup_old_sids_for_token(room_code, token, current_sid):
             pass
 
 
+def detach_current_sid_from_other_room(current_sid, target_room_code=None):
+    """Garante que o mesmo socket não fique preso em duas salas simultaneamente."""
+    prev = sid_to_session.get(current_sid)
+    if prev and prev["room_code"] != target_room_code:
+        old_code = prev["room_code"]
+        sid_to_session.pop(current_sid, None)
+        try:
+            leave_room(old_code, sid=current_sid)
+        except Exception:
+            pass
+        old_room = rooms.get(old_code)
+        if old_room:
+            old_room.disconnect_player(current_sid)
+            broadcast_room_state(old_code)
+
+
+def cleanup_sessions_for_deleted_room(room_code):
+    """Limpa entradas órfãs de sid_to_session quando uma sala expira."""
+    stale = [sid for sid, sess in list(sid_to_session.items()) if sess["room_code"] == room_code]
+    for sid in stale:
+        sid_to_session.pop(sid, None)
+
+
 def background_timer_loop():
     """Loop global de 1 segundo para cronômetros e limpeza de salas ociosas."""
     while True:
@@ -85,6 +109,7 @@ def background_timer_loop():
                         )
             for code in to_delete:
                 rooms.pop(code, None)
+                cleanup_sessions_for_deleted_room(code)
         except Exception:
             app.logger.exception("Erro no background_timer_loop")
 
@@ -132,6 +157,8 @@ def handle_create_room(data):
     avatar = data.get("avatar") or "👑"
     token = data.get("token")
 
+    detach_current_sid_from_other_room(request.sid)
+
     code = generate_room_code(rooms.keys())
     host = Player(name=name, sid=request.sid, avatar=avatar, token=token)
     room = FDPRoom(code=code, host_player=host)
@@ -152,15 +179,24 @@ def handle_join_room(data):
     name = (data.get("name") or "Jogador").strip()
     avatar = data.get("avatar")
     token = data.get("token")
+    auto_reconnect = bool(data.get("auto_reconnect", False))
 
     room = rooms.get(code)
     if not room:
-        emit("error_msg", {"message": f"Sala '{code}' não encontrada. Verifique o código!"})
+        if auto_reconnect:
+            emit("session_expired", {"room_code": code})
+        else:
+            emit("error_msg", {"message": f"Sala '{code}' não encontrada. Verifique o código!"})
         return
+
+    detach_current_sid_from_other_room(request.sid, target_room_code=code)
 
     player, reconnected, err = room.add_player(name=name, sid=request.sid, avatar=avatar, token=token)
     if err:
-        emit("error_msg", {"message": err})
+        if auto_reconnect:
+            emit("session_expired", {"room_code": code})
+        else:
+            emit("error_msg", {"message": err})
         return
 
     cleanup_old_sids_for_token(code, player.token, request.sid)
@@ -188,6 +224,7 @@ def handle_leave_room():
         room.remove_player(token)
         if not room.human_tokens():
             rooms.pop(code, None)
+            cleanup_sessions_for_deleted_room(code)
         else:
             socketio.emit("toast", {"message": f"{pname} saiu da sala."}, to=code)
             broadcast_room_state(code)
