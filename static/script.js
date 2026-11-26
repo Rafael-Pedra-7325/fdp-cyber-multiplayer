@@ -1,5 +1,11 @@
 (() => {
-  const socket = io({ transports: ["websocket", "polling"] });
+  const socket = io({
+    transports: ["polling", "websocket"],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+  });
 
   // ==================== ESTADO DO CLIENTE ====================
   let metaData = null;
@@ -7,6 +13,7 @@
   let selectedAvatar = localStorage.getItem("fdp_avatar") || "😈";
   let myToken = localStorage.getItem("fdp_token") || null;
   let savedRoom = localStorage.getItem("fdp_room") || null;
+  let pendingUrlSala = new URLSearchParams(window.location.search).get("sala");
 
   let selectedIndices = [];       // Ordem das cartas selecionadas para jogar
   let customWildTexts = {};       // index -> texto customizado
@@ -97,7 +104,8 @@
       .replace(/&/g, "&")
       .replace(/</g, "<")
       .replace(/>/g, ">")
-      .replace(/"/g, """);
+      .replace(/"/g, """)
+      .replace(/'/g, "'");
   }
 
   function getInviteUrl() {
@@ -126,14 +134,25 @@
     $("modal-qr").classList.remove("hidden");
   }
 
+  function tryAutoReconnect() {
+    const roomToRejoin = state?.room_code || (!pendingUrlSala ? savedRoom : null);
+    if (roomToRejoin && myToken) {
+      socket.emit("join_room_request", {
+        room_code: roomToRejoin,
+        name: localStorage.getItem("fdp_name") || $("input-name").value.trim() || "Jogador",
+        avatar: selectedAvatar,
+        token: myToken,
+        auto_reconnect: true,
+      });
+    }
+  }
+
   // ==================== INICIALIZAÇÃO ====================
   async function init() {
     const savedName = localStorage.getItem("fdp_name");
     if (savedName) $("input-name").value = savedName;
 
-    const params = new URLSearchParams(window.location.search);
-    const urlSala = params.get("sala");
-    if (urlSala) $("input-room-code").value = urlSala.toUpperCase();
+    if (pendingUrlSala) $("input-room-code").value = pendingUrlSala.toUpperCase();
 
     $("btn-sound").textContent = soundEnabled ? "🔊" : "🔇";
 
@@ -142,18 +161,13 @@
       metaData = await res.json();
       $("meta-total-cards").textContent = metaData.deck_stats.grand_total.toLocaleString("pt-BR");
       renderAvatarGrid(metaData.avatars);
+      if (state) renderState();
     } catch (e) {
       showToast("Erro ao carregar metadados do servidor.", true);
     }
 
-    // Auto-reconexão se o jogador recarregou a página no meio da partida
-    if (savedRoom && myToken && !urlSala) {
-      socket.emit("join_room_request", {
-        room_code: savedRoom,
-        name: localStorage.getItem("fdp_name") || "Jogador",
-        avatar: selectedAvatar,
-        token: myToken,
-      });
+    if (socket.connected) {
+      tryAutoReconnect();
     }
   }
 
@@ -194,6 +208,7 @@
     if (!confirm("Deseja realmente sair desta sala?")) return;
     socket.emit("leave_room_request");
     localStorage.removeItem("fdp_room");
+    savedRoom = null;
     state = null;
     showView("view-home");
   };
@@ -552,7 +567,7 @@
           box.onclick = () => socket.emit("reveal_submission", { entry_id: sub.entry_id });
         }
       } else {
-        let cardsHtml = sub.cards.map((c) => `<div class="sub-white-card">${escapeHtml(c)}</div>`).join("");
+        const cardsHtml = sub.cards.map((c) => `<div class="sub-white-card">${escapeHtml(c)}</div>`).join("");
         let footerHtml = "";
 
         if (state.phase === "round_result") {
@@ -643,7 +658,7 @@
         + (isSelected ? (rebootMode ? " reboot-selected" : " selected") : "")
         + (!canInteract ? " disabled" : "");
 
-      let displayContent = isWild
+      const displayContent = isWild
         ? (customWildTexts[String(idx)] ? `✨ ${customWildTexts[String(idx)]}` : "✨ CARTA CORINGA\n(Toque para escrever sua própria resposta +18)")
         : cardText;
 
@@ -743,14 +758,26 @@
   }
 
   // ==================== LISTENERS SOCKET.IO ====================
+  socket.on("connect", () => {
+    tryAutoReconnect();
+  });
+
   socket.on("joined_success", (data) => {
     myToken = data.token;
+    savedRoom = data.room_code;
+    pendingUrlSala = null;
     localStorage.setItem("fdp_token", myToken);
     localStorage.setItem("fdp_room", data.room_code);
-    // Limpa ?sala= da URL sem recarregar
     if (window.location.search) {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
+  });
+
+  socket.on("session_expired", () => {
+    localStorage.removeItem("fdp_room");
+    savedRoom = null;
+    state = null;
+    showView("view-home");
   });
 
   socket.on("room_state", (newState) => {
@@ -783,6 +810,7 @@
   socket.on("kicked", (data) => {
     showToast(data.message, true);
     localStorage.removeItem("fdp_room");
+    savedRoom = null;
     state = null;
     showView("view-home");
   });
