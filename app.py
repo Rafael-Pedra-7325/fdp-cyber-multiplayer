@@ -15,16 +15,24 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "fdp-cyber-noir-secret-2026")
 
+# Detecta gevent automaticamente em produção (Render/Gunicorn)
+try:
+    import gevent  # noqa: F401
+    ASYNC_MODE = "gevent"
+except ImportError:
+    ASYNC_MODE = "threading"
+
 socketio = SocketIO(
     app,
+    async_mode=ASYNC_MODE,
     cors_allowed_origins="*",
     ping_timeout=60,
     ping_interval=25,
 )
 
 # Armazenamento em memória das salas ativas
-rooms = {}          # room_code -> FDPRoom
-sid_to_session = {} # sid -> {"room_code": str, "token": str}
+rooms = {}           # room_code -> FDPRoom
+sid_to_session = {}  # sid -> {"room_code": str, "token": str}
 timer_task_started = False
 
 
@@ -36,6 +44,20 @@ def broadcast_room_state(room_code):
         if player.connected and player.sid and not player.is_bot:
             state = room.get_state_for_player(token)
             socketio.emit("room_state", state, to=player.sid)
+
+
+def cleanup_old_sids_for_token(room_code, token, current_sid):
+    """Remove SIDs antigos órfãos quando um jogador reconecta."""
+    stale_sids = [
+        sid for sid, sess in list(sid_to_session.items())
+        if sid != current_sid and sess["room_code"] == room_code and sess["token"] == token
+    ]
+    for old_sid in stale_sids:
+        sid_to_session.pop(old_sid, None)
+        try:
+            leave_room(room_code, sid=old_sid)
+        except Exception:
+            pass
 
 
 def background_timer_loop():
@@ -59,7 +81,7 @@ def background_timer_loop():
                         socketio.emit(
                             "timer_tick",
                             {"remaining": room.timer_remaining, "active": room.timer_active},
-                            room=code,
+                            to=code,
                         )
             for code in to_delete:
                 rooms.pop(code, None)
@@ -92,7 +114,7 @@ def api_meta():
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "active_rooms": len(rooms)})
+    return jsonify({"status": "ok", "active_rooms": len(rooms), "async_mode": ASYNC_MODE})
 
 
 # ==================== EVENTOS SOCKET.IO ====================
@@ -105,6 +127,7 @@ def handle_connect():
 @socketio.on("create_room")
 def handle_create_room(data):
     ensure_timer_started()
+    data = data or {}
     name = (data.get("name") or "Anfitrião").strip()
     avatar = data.get("avatar") or "👑"
     token = data.get("token")
@@ -124,6 +147,7 @@ def handle_create_room(data):
 @socketio.on("join_room_request")
 def handle_join_room(data):
     ensure_timer_started()
+    data = data or {}
     code = (data.get("room_code") or "").strip().upper()
     name = (data.get("name") or "Jogador").strip()
     avatar = data.get("avatar")
@@ -139,12 +163,13 @@ def handle_join_room(data):
         emit("error_msg", {"message": err})
         return
 
+    cleanup_old_sids_for_token(code, player.token, request.sid)
     join_room(code)
     sid_to_session[request.sid] = {"room_code": code, "token": player.token}
 
     emit("joined_success", {"room_code": code, "token": player.token, "reconnected": reconnected})
     if not reconnected:
-        socketio.emit("toast", {"message": f"{player.avatar} {player.name} entrou na sala!"}, room=code)
+        socketio.emit("toast", {"message": f"{player.avatar} {player.name} entrou na sala!"}, to=code)
     broadcast_room_state(code)
 
 
@@ -164,7 +189,7 @@ def handle_leave_room():
         if not room.human_tokens():
             rooms.pop(code, None)
         else:
-            socketio.emit("toast", {"message": f"{pname} saiu da sala."}, room=code)
+            socketio.emit("toast", {"message": f"{pname} saiu da sala."}, to=code)
             broadcast_room_state(code)
 
 
@@ -188,7 +213,7 @@ def handle_update_config(data):
     room = rooms.get(sess["room_code"])
     if not room:
         return
-    ok, err = room.update_config(sess["token"], data)
+    ok, err = room.update_config(sess["token"], data or {})
     if not ok:
         emit("error_msg", {"message": err})
         return
@@ -203,11 +228,17 @@ def handle_kick_player(data):
     room = rooms.get(sess["room_code"])
     if not room or sess["token"] != room.host_token:
         return
-    target_id = data.get("player_id")
+    target_id = (data or {}).get("player_id")
     if target_id and target_id != room.host_token and target_id in room.players:
         target = room.players[target_id]
-        if target.sid:
-            socketio.emit("kicked", {"message": "Você foi removido da sala pelo Anfitrião."}, to=target.sid)
+        target_sid = target.sid
+        if target_sid:
+            socketio.emit("kicked", {"message": "Você foi removido da sala pelo Anfitrião."}, to=target_sid)
+            sid_to_session.pop(target_sid, None)
+            try:
+                leave_room(sess["room_code"], sid=target_sid)
+            except Exception:
+                pass
         room.remove_player(target_id)
         broadcast_room_state(sess["room_code"])
 
@@ -224,7 +255,7 @@ def handle_start_game():
     if not ok:
         emit("error_msg", {"message": err})
         return
-    socketio.emit("sound_cue", {"sound": "start"}, room=sess["room_code"])
+    socketio.emit("sound_cue", {"sound": "start"}, to=sess["room_code"])
     broadcast_room_state(sess["room_code"])
 
 
@@ -236,6 +267,7 @@ def handle_submit_cards(data):
     room = rooms.get(sess["room_code"])
     if not room:
         return
+    data = data or {}
     ok, err = room.submit_cards(
         player_token=sess["token"],
         card_indices=data.get("indices", []),
@@ -245,7 +277,7 @@ def handle_submit_cards(data):
     if not ok:
         emit("error_msg", {"message": err})
         return
-    socketio.emit("sound_cue", {"sound": "card"}, room=sess["room_code"])
+    socketio.emit("sound_cue", {"sound": "card"}, to=sess["room_code"])
     broadcast_room_state(sess["room_code"])
 
 
@@ -257,6 +289,7 @@ def handle_reboot_hand(data):
     room = rooms.get(sess["room_code"])
     if not room:
         return
+    data = data or {}
     ok, err = room.reboot_hand(
         player_token=sess["token"],
         card_indices=data.get("indices", []),
@@ -277,11 +310,11 @@ def handle_reveal_submission(data):
     room = rooms.get(sess["room_code"])
     if not room:
         return
-    ok, err = room.reveal_submission(sess["token"], data.get("entry_id"))
+    ok, err = room.reveal_submission(sess["token"], (data or {}).get("entry_id"))
     if not ok:
         emit("error_msg", {"message": err})
         return
-    socketio.emit("sound_cue", {"sound": "reveal"}, room=sess["room_code"])
+    socketio.emit("sound_cue", {"sound": "reveal"}, to=sess["room_code"])
     broadcast_room_state(sess["room_code"])
 
 
@@ -297,7 +330,7 @@ def handle_reveal_all():
     if not ok:
         emit("error_msg", {"message": err})
         return
-    socketio.emit("sound_cue", {"sound": "reveal"}, room=sess["room_code"])
+    socketio.emit("sound_cue", {"sound": "reveal"}, to=sess["room_code"])
     broadcast_room_state(sess["room_code"])
 
 
@@ -309,11 +342,11 @@ def handle_pick_winner(data):
     room = rooms.get(sess["room_code"])
     if not room:
         return
-    ok, err = room.judge_pick_winner(sess["token"], data.get("entry_id"))
+    ok, err = room.judge_pick_winner(sess["token"], (data or {}).get("entry_id"))
     if not ok:
         emit("error_msg", {"message": err})
         return
-    socketio.emit("sound_cue", {"sound": "win"}, room=sess["room_code"])
+    socketio.emit("sound_cue", {"sound": "win"}, to=sess["room_code"])
     broadcast_room_state(sess["room_code"])
 
 
@@ -325,11 +358,11 @@ def handle_cast_vote(data):
     room = rooms.get(sess["room_code"])
     if not room:
         return
-    ok, err = room.cast_vote(sess["token"], data.get("entry_id"))
+    ok, err = room.cast_vote(sess["token"], (data or {}).get("entry_id"))
     if not ok:
         emit("error_msg", {"message": err})
         return
-    socketio.emit("sound_cue", {"sound": "card"}, room=sess["room_code"])
+    socketio.emit("sound_cue", {"sound": "card"}, to=sess["room_code"])
     broadcast_room_state(sess["room_code"])
 
 
@@ -345,7 +378,7 @@ def handle_next_round():
     if not ok:
         emit("error_msg", {"message": err})
         return
-    socketio.emit("sound_cue", {"sound": "start"}, room=sess["room_code"])
+    socketio.emit("sound_cue", {"sound": "start"}, to=sess["room_code"])
     broadcast_room_state(sess["room_code"])
 
 
@@ -361,7 +394,7 @@ def handle_force_advance():
     if not ok:
         emit("error_msg", {"message": err})
         return
-    socketio.emit("toast", {"message": "⚡ O Anfitrião avançou a fase da rodada!"}, room=sess["room_code"])
+    socketio.emit("toast", {"message": "⚡ O Anfitrião avançou a fase da rodada!"}, to=sess["room_code"])
     broadcast_room_state(sess["room_code"])
 
 
@@ -388,12 +421,12 @@ def handle_reaction(data):
     room = rooms.get(sess["room_code"])
     if not room:
         return
-    emoji = str(data.get("emoji", "💀"))[:4]
+    emoji = str((data or {}).get("emoji", "💀"))[:4]
     p = room.players.get(sess["token"])
     socketio.emit(
         "floating_reaction",
         {"emoji": emoji, "sender": p.name if p else ""},
-        room=sess["room_code"],
+        to=sess["room_code"],
     )
 
 
