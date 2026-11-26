@@ -14,6 +14,7 @@
   let myToken = localStorage.getItem("fdp_token") || null;
   let savedRoom = localStorage.getItem("fdp_room") || null;
   let pendingUrlSala = new URLSearchParams(window.location.search).get("sala");
+  let reconnectPending = false;
 
   let selectedIndices = [];       // Ordem das cartas selecionadas para jogar
   let customWildTexts = {};       // index -> texto customizado
@@ -137,8 +138,10 @@
   }
 
   function tryAutoReconnect() {
+    if (reconnectPending) return;
     const roomToRejoin = state?.room_code || (!pendingUrlSala ? savedRoom : null);
     if (roomToRejoin && myToken) {
+      reconnectPending = true;
       socket.emit("join_room_request", {
         room_code: roomToRejoin,
         name: localStorage.getItem("fdp_name") || $("input-name").value.trim() || "Jogador",
@@ -168,7 +171,7 @@
       showToast("Erro ao carregar metadados do servidor.", true);
     }
 
-    if (socket.connected) {
+    if (socket.connected && !state) {
       tryAutoReconnect();
     }
   }
@@ -212,6 +215,7 @@
     localStorage.removeItem("fdp_room");
     savedRoom = null;
     state = null;
+    reconnectPending = false;
     showView("view-home");
   };
 
@@ -494,7 +498,7 @@
     const bc = state.current_black_card;
     if (bc) {
       $("black-pick-badge").textContent = bc.pick === 1 ? "ESCOLHA 1" : `ESCOLHA ${bc.pick}`;
-      const formattedText = escapeHtml(bc.text).replace(/___/g, '<span class="blank-slot">     </span>');
+      const formattedText = escapeHtml(bc.text).replace(/_{3,}/g, '<span class="blank-slot">     </span>');
       $("black-card-text").innerHTML = formattedText;
       $("judge-label-card").textContent = state.judge_name
         ? `👑 Juiz: ${state.judge_avatar} ${state.judge_name}`
@@ -765,7 +769,12 @@
     tryAutoReconnect();
   });
 
+  socket.on("disconnect", () => {
+    reconnectPending = false;
+  });
+
   socket.on("joined_success", (data) => {
+    reconnectPending = false;
     myToken = data.token;
     savedRoom = data.room_code;
     pendingUrlSala = null;
@@ -777,6 +786,7 @@
   });
 
   socket.on("session_expired", () => {
+    reconnectPending = false;
     localStorage.removeItem("fdp_room");
     savedRoom = null;
     state = null;
@@ -806,11 +816,15 @@
   });
 
   socket.on("toast", (data) => showToast(data.message));
-  socket.on("error_msg", (data) => showToast(data.message, true));
+  socket.on("error_msg", (data) => {
+    reconnectPending = false;
+    showToast(data.message, true);
+  });
   socket.on("sound_cue", (data) => playSound(data.sound));
   socket.on("floating_reaction", (data) => spawnFloatingReaction(data.emoji, data.sender));
 
   socket.on("kicked", (data) => {
+    reconnectPending = false;
     showToast(data.message, true);
     localStorage.removeItem("fdp_room");
     savedRoom = null;
