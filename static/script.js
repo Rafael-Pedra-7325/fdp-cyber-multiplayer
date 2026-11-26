@@ -832,5 +832,12 @@
     showView("view-home");
   });
 
+  // Keep-alive para evitar hibernação do Render Free durante partidas ativas
+  setInterval(() => {
+    if (state && state.room_code) {
+      fetch("/health", { cache: "no-store" }).catch(() => {});
+    }
+  }, 240000);
+
   init();
 })();
