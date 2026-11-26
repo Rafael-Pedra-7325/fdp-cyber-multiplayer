@@ -6,7 +6,6 @@ cartas coringa editáveis e controle de tempo automático.
 """
 
 import random
-import string
 import time
 import uuid
 from cards_data import WHITE_DECKS, BLACK_DECKS, DECK_METADATA
@@ -141,8 +140,6 @@ class FDPRoom:
         self.black_discard = []
 
         self.current_black_card = None
-        # Lista de jogadas da rodada:
-        # [{"entry_id": str, "player_token": str, "cards": [str], "revealed": bool, "is_bet": bool, "votes": [token]}]
         self.submissions = []
         self.bet_pot = 0
         self.player_bet_used = set()
@@ -150,7 +147,7 @@ class FDPRoom:
 
         self.round_winner_info = None
         self.game_winner_info = None
-        self.history = []  # Melhores momentos da partida
+        self.history = []
 
         # Cronômetro
         self.timer_remaining = 0
@@ -198,7 +195,6 @@ class FDPRoom:
         self.players[new_player.token] = new_player
         self.player_order.append(new_player.token)
 
-        # Se entrou no meio da partida, já compra cartas para participar da próxima (ou atual)
         if self.phase != "lobby":
             self._refill_hand(new_player)
 
@@ -221,18 +217,21 @@ class FDPRoom:
             self.player_order.remove(token)
 
         # Transferir host se necessário
+        humans = self.human_tokens()
         if self.host_token == token:
-            humans = self.human_tokens()
             self.host_token = humans[0] if humans else None
+
+        min_req = 2 if (self._uses_rando() or self._is_democracy()) else self.MIN_PLAYERS
+        if self.phase != "lobby" and len(humans) < min_req:
+            self.phase = "lobby"
+            self.timer_active = False
+            self.submissions = []
+            self.current_black_card = None
+            return True
 
         # Se o juiz saiu durante a rodada, avança ou redefine
         if self.phase in ("playing", "judging") and self.judge_token == token:
-            humans = self.human_tokens()
-            if len(humans) < self.MIN_PLAYERS:
-                self.phase = "lobby"
-                self.timer_active = False
-            else:
-                self.start_next_round(advance_judge=True)
+            self.start_next_round(advance_judge=True)
         elif self.phase == "playing":
             self._check_all_submitted()
         elif self.phase == "voting":
@@ -261,7 +260,6 @@ class FDPRoom:
         self.config["wildcards_enabled"] = bool(new_config.get("wildcards_enabled", self.config["wildcards_enabled"]))
         self.config["allow_reboot"] = bool(new_config.get("allow_reboot", self.config["allow_reboot"]))
 
-        # Ajustes automáticos de presets de modo
         if self.config["mode"] == "relampago":
             self.config["timer_seconds"] = 25
         elif self.config["mode"] == "caos_total":
@@ -281,11 +279,9 @@ class FDPRoom:
             self.white_deck.extend(WHITE_DECKS.get(d, []))
             self.black_deck.extend(BLACK_DECKS.get(d, []))
 
-        # Remover duplicatas exatas mantendo aleatoriedade
         self.white_deck = list(dict.fromkeys(self.white_deck))
 
         if self.config["wildcards_enabled"] or self.config["mode"] == "caos_total":
-            # Adiciona 18 cartas Coringa (Escreva a Sua) espalhadas no baralho
             self.white_deck.extend([WILDCARD_TOKEN] * 18)
 
         random.shuffle(self.white_deck)
@@ -295,7 +291,6 @@ class FDPRoom:
             single = [c for c in self.black_deck if c["pick"] == 1]
             random.shuffle(multi)
             random.shuffle(single)
-            # Intercala para dar mais destaque às cartas duplas/triplas
             self.black_deck = []
             while multi or single:
                 if multi:
@@ -354,12 +349,10 @@ class FDPRoom:
         self.history = []
         self.game_winner_info = None
 
-        # Remover Rando anterior se existir
         if self.rando_player and self.rando_player.token in self.players:
             del self.players[self.rando_player.token]
             self.rando_player = None
 
-        # Resetar jogadores humanos
         for t in humans:
             p = self.players[t]
             p.score = 0
@@ -367,7 +360,6 @@ class FDPRoom:
             p.free_mulligan_used = False
             self._refill_hand(p)
 
-        # Adicionar Rando Cardrissian se ativo
         if self._uses_rando():
             self.rando_player = Player("Rando Cardrissian", sid=None, avatar="🤖", token="BOT_RANDO", is_bot=True)
             self.players["BOT_RANDO"] = self.rando_player
@@ -406,14 +398,12 @@ class FDPRoom:
             self.black_discard.append(self.current_black_card)
         self.current_black_card = self._draw_black()
 
-        # Regra Oficial FDP/CAH: "Compre 2, Jogue 3" quando pick == 3 (e +1 quando pick == 2)
         pick = self.current_black_card["pick"]
         extra_draw = 2 if pick >= 3 else (1 if pick == 2 else 0)
         for t in humans:
             p = self.players[t]
             self._refill_hand(p, self.HAND_SIZE + extra_draw)
 
-        # Rando joga imediatamente em segredo
         if self._uses_rando() and self.rando_player:
             rando_cards = []
             for _ in range(pick):
@@ -495,7 +485,6 @@ class FDPRoom:
             else:
                 chosen_cards.append(raw_card)
 
-        # Remover cartas da mão (do maior índice para o menor)
         for idx in sorted(card_indices, reverse=True):
             removed = player.hand.pop(idx)
             if removed != WILDCARD_TOKEN:
@@ -528,7 +517,6 @@ class FDPRoom:
     def _move_to_judging_or_voting(self):
         random.shuffle(self.submissions)
         if self._is_democracy():
-            # Na democracia todas são reveladas para votação simultânea
             for s in self.submissions:
                 s["revealed"] = True
             self.phase = "voting"
@@ -645,7 +633,6 @@ class FDPRoom:
             })
             self.history = self.history[:15]
 
-        # Checar condição de vitória da partida
         max_score = self.config["max_score"]
         champion = None
         for p in self.players.values():
@@ -678,8 +665,15 @@ class FDPRoom:
         player = self.players.get(player_token)
         if not player:
             return False, "Jogador não encontrado."
-        if not card_indices:
+        if not isinstance(card_indices, list) or not card_indices:
             return False, "Selecione ao menos uma carta para trocar."
+
+        valid_idxs = sorted(
+            {i for i in card_indices if isinstance(i, int) and 0 <= i < len(player.hand)},
+            reverse=True,
+        )
+        if not valid_idxs:
+            return False, "Nenhuma carta válida selecionada para troca."
 
         if use_free:
             if player.free_mulligan_used:
@@ -690,7 +684,6 @@ class FDPRoom:
                 return False, "Você precisa de 1 ponto para fazer Troca Tática."
             player.score -= 1
 
-        valid_idxs = sorted(set(i for i in card_indices if 0 <= i < len(player.hand)), reverse=True)
         for idx in valid_idxs:
             removed = player.hand.pop(idx)
             if removed != WILDCARD_TOKEN:
@@ -704,7 +697,6 @@ class FDPRoom:
         if requester_token != self.host_token and requester_token != self.judge_token:
             return False, "Apenas o Anfitrião ou o Juiz podem avançar para a próxima rodada."
 
-        # Modo Reinado do FDP: vencedor humano vira o próximo Juiz
         forced_judge = None
         if self.config["mode"] == "reinado" and self.round_winner_info:
             winners = self.round_winner_info.get("winners", [])
@@ -804,7 +796,6 @@ class FDPRoom:
                 )
             )
 
-        # Sanitizar submissões para manter anonimato até o resultado
         public_submissions = []
         show_authors = self.phase in ("round_result", "game_over")
         for s in self.submissions:
