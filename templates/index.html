@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>FDP // FOI DE PROPÓSITO — CYBER MULTIPLAYER +18</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <div class="bg-glow glow-1"></div>
+  <div class="bg-glow glow-2"></div>
+
+  <!-- Camada de Reações Flutuantes e Notificações -->
+  <div id="reactions-layer"></div>
+  <div id="toast-container"></div>
+
+  <!-- Topbar Global -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-badge">+18</span>
+      <span class="brand-title">FDP<span class="accent">.CYBER</span></span>
+    </div>
+
+    <div class="topbar-center hidden" id="room-header-pill">
+      <span class="code-label">SALA</span>
+      <strong id="header-room-code">-----</strong>
+      <button class="icon-btn-sm" id="btn-copy-link" title="Copiar link de convite">🔗</button>
+      <button class="icon-btn-sm" id="btn-share-wa" title="Enviar no WhatsApp">💬</button>
+    </div>
+
+    <div class="topbar-actions">
+      <button class="icon-btn" id="btn-rules" title="Manual de Regras">📖</button>
+      <button class="icon-btn" id="btn-history" title="Melhores Momentos" style="display:none;">🏆</button>
+      <button class="icon-btn" id="btn-sound" title="Som Ligado/Desligado">🔊</button>
+      <button class="icon-btn danger hidden" id="btn-leave" title="Sair da Sala">🚪</button>
+    </div>
+  </header>
+
+  <main class="app-shell">
+
+    <!-- ==================== TELA 1: HOME / LOGIN ==================== -->
+    <section id="view-home" class="view active">
+      <div class="hero-card glass">
+        <div class="hero-tag">MULTIPLAYER EM TEMPO REAL • ATÉ 12 JOGADORES</div>
+        <h1 class="hero-title">FOI DE <span class="neon-text">PROPÓSITO</span></h1>
+        <p class="hero-sub">
+          O jogo de cartas mais politicamente incorreto da galáxia — agora em edição tecnológica com
+          <strong id="meta-total-cards">1.050+</strong> cartas, 5 baralhos e 8 modos de caos.
+        </p>
+
+        <div class="profile-setup">
+          <div class="input-group">
+            <label for="input-name">SEU APELIDO NA MESA</label>
+            <input type="text" id="input-name" maxlength="18" placeholder="Ex: DestruidorDeLares" autocomplete="off" />
+          </div>
+
+          <div class="avatar-picker">
+            <label>ESCOLHA SEU AVATAR</label>
+            <div id="avatar-grid" class="avatar-grid"></div>
+          </div>
+        </div>
+
+        <div class="home-actions">
+          <button id="btn-create-room" class="btn btn-primary btn-lg">
+            <span>⚡ CRIAR NOVA SALA</span>
+          </button>
+
+          <div class="divider"><span>OU ENTRE COM UM CÓDIGO</span></div>
+
+          <div class="join-row">
+            <input type="text" id="input-room-code" maxlength="6" placeholder="CÓDIGO (EX: X9K2P)" autocomplete="off" />
+            <button id="btn-join-room" class="btn btn-cyan">ENTRAR</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TELA 2: LOBBY ==================== -->
+    <section id="view-lobby" class="view">
+      <div class="lobby-grid">
+        <!-- Coluna Esquerda: Jogadores e Convite -->
+        <div class="panel glass">
+          <div class="panel-header">
+            <h2>👥 JOGADORES (<span id="lobby-count">0</span>/12)</h2>
+            <span class="pill-code" id="lobby-code-big">-----</span>
+          </div>
+
+          <div class="invite-banner">
+            <p>Compartilhe o link para seus amigos entrarem direto no celular:</p>
+            <div class="invite-buttons">
+              <button class="btn btn-sm btn-cyan" id="btn-lobby-copy">📋 Copiar Link</button>
+              <button class="btn btn-sm btn-outline" id="btn-lobby-qr">📱 Mostrar QR Code</button>
+              <button class="btn btn-sm btn-success" id="btn-lobby-wa">💬 WhatsApp</button>
+            </div>
+          </div>
+
+          <div id="lobby-players-list" class="players-list"></div>
+
+          <div class="host-start-area" id="host-start-area">
+            <button id="btn-start-game" class="btn btn-primary btn-lg full-width">
+              🚀 INICIAR PARTIDA
+            </button>
+            <p class="hint-text" id="start-hint">Mínimo de 3 jogadores (ou 2 com Rando / Democracia).</p>
+          </div>
+          <div class="guest-wait-area hidden" id="guest-wait-area">
+            <div class="pulse-dot"></div>
+            <span>Aguardando o Anfitrião configurar e iniciar o caos...</span>
+          </div>
+        </div>
+
+        <!-- Coluna Direita: Configurações da Partida -->
+        <div class="panel glass">
+          <div class="panel-header">
+            <h2>🎛️ PAINEL DE CAOS</h2>
+            <span class="tag-badge" id="config-lock-badge">HOST CONTROLA</span>
+          </div>
+
+          <!-- Modos de Jogo -->
+          <div class="config-block">
+            <label class="config-label">MODO DE JOGO</label>
+            <div id="modes-grid" class="modes-grid"></div>
+          </div>
+
+          <!-- Baralhos / Expansões -->
+          <div class="config-block">
+            <label class="config-label">EXPANSÕES ATIVAS (<span id="selected-cards-total">0</span> CARTAS)</label>
+            <div id="decks-grid" class="decks-grid"></div>
+          </div>
+
+          <!-- Parâmetros Numéricos & Toggles -->
+          <div class="config-sliders">
+            <div class="slider-item">
+              <label>PONTOS PARA VENCER: <strong id="lbl-max-score">7</strong></label>
+              <input type="range" id="cfg-max-score" min="3" max="15" value="7" />
+            </div>
+            <div class="slider-item">
+              <label>TEMPO POR RODADA: <strong id="lbl-timer">60s</strong></label>
+              <input type="range" id="cfg-timer" min="0" max="120" step="15" value="60" />
+            </div>
+          </div>
+
+          <div class="config-toggles">
+            <label class="toggle-chip">
+              <input type="checkbox" id="cfg-wildcards" checked />
+              <span>✨ Cartas Coringa (Escreva a Sua)</span>
+            </label>
+            <label class="toggle-chip">
+              <input type="checkbox" id="cfg-reboot" checked />
+              <span>🔄 Troca Tática (Reboot de Mão)</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TELA 3: MESA DE JOGO ==================== -->
+    <section id="view-game" class="view">
+
+      <!-- Barra de Status dos Jogadores (Scroll Horizontal no Mobile) -->
+      <div class="scoreboard-strip" id="scoreboard-strip"></div>
+
+      <!-- Barra de Status da Rodada -->
+      <div class="round-banner glass">
+        <div class="round-meta">
+          <span class="badge-round">RODADA <strong id="game-round-num">1</strong></span>
+          <span class="badge-mode" id="game-mode-badge">CLÁSSICO</span>
+          <span class="badge-pot hidden" id="game-pot-badge">🎰 POTE: +0</span>
+        </div>
+        <div class="round-status-text" id="round-status-text">Carregando mesa...</div>
+        <div class="round-right-controls">
+          <div class="timer-box hidden" id="game-timer-box">⏱️ <span id="game-timer-val">60</span>s</div>
+          <button class="btn btn-xs btn-outline hidden" id="btn-force-advance" title="Avançar rodada (Anfitrião)">⏭️ Avançar</button>
+        </div>
+      </div>
+
+      <!-- Palco Principal: Carta Preta + Cartas Jogadas -->
+      <div class="stage-grid">
+        <!-- Carta Preta (Pergunta) -->
+        <div class="black-card-zone">
+          <div class="black-card" id="black-card-el">
+            <div class="card-top-meta">
+              <span class="card-brand">FDP // PERGUNTA</span>
+              <span class="pick-badge" id="black-pick-badge">ESCOLHA 1</span>
+            </div>
+            <div class="black-card-text" id="black-card-text">...</div>
+            <div class="card-footer-meta">
+              <span id="judge-label-card">👑 Juiz: ---</span>
+              <span id="submission-progress">0/0</span>
+            </div>
+          </div>
+
+          <!-- Barra de Reações Ao Vivo -->
+          <div class="reactions-bar glass">
+            <button class="react-btn" data-emoji="💀">💀</button>
+            <button class="react-btn" data-emoji="😂">😂</button>
+            <button class="react-btn" data-emoji="🔥">🔥</button>
+            <button class="react-btn" data-emoji="🤮">🤮</button>
+            <button class="react-btn" data-emoji="🚨">🚨</button>
+            <button class="react-btn" data-emoji="👑">👑</button>
+          </div>
+        </div>
+
+        <!-- Área de Submissões / Julgamento / Resultado -->
+        <div class="table-zone">
+          <div class="table-header-bar">
+            <h3 id="table-zone-title">MESA DE RESPOSTAS</h3>
+            <div class="table-actions">
+              <button class="btn btn-sm btn-cyan hidden" id="btn-reveal-all">👁️ Revelar Todas</button>
+              <button class="btn btn-sm btn-primary hidden" id="btn-next-round">➡️ Próxima Rodada</button>
+            </div>
+          </div>
+
+          <!-- Banner de Vencedor da Rodada -->
+          <div id="round-winner-banner" class="winner-banner hidden"></div>
+
+          <!-- Grid de Combinações Anônimas -->
+          <div id="submissions-grid" class="submissions-grid"></div>
+        </div>
+      </div>
+
+      <!-- Mão do Jogador (Dock Inferior) -->
+      <div class="hand-dock glass" id="hand-dock">
+        <div class="hand-header">
+          <div class="hand-info">
+            <h3>SUA MÃO (<span id="hand-count">10</span>)</h3>
+            <span class="hand-hint" id="hand-hint">Selecione sua resposta abaixo</span>
+          </div>
+          <div class="hand-controls">
+            <button class="btn btn-sm btn-outline hidden" id="btn-reboot-mode">🔄 Trocar Cartas</button>
+            <button class="btn btn-sm btn-gold hidden" id="btn-bet-mode">🎰 Apostar 1pt (+1 Jogada)</button>
+            <button class="btn btn-sm btn-primary" id="btn-submit-cards" disabled>🚀 ENVIAR JOGADA</button>
+          </div>
+        </div>
+        <div id="player-hand" class="player-hand"></div>
+      </div>
+    </section>
+
+    <!-- ==================== TELA 4: FIM DE JOGO ==================== -->
+    <section id="view-gameover" class="view">
+      <div class="gameover-card glass">
+        <div class="trophy-anim" id="gameover-emoji">🏆</div>
+        <div class="hero-tag" id="gameover-subtitle">FIM DE PARTIDA</div>
+        <h1 class="gameover-title" id="gameover-title">VENCEDOR!</h1>
+        <p id="gameover-roast" class="gameover-roast"></p>
+
+        <div id="gameover-ranking" class="ranking-list"></div>
+
+        <div class="gameover-actions">
+          <button class="btn btn-primary btn-lg hidden" id="btn-play-again">🔥 JOGAR NOVAMENTE</button>
+          <button class="btn btn-outline btn-lg hidden" id="btn-back-lobby">⚙️ VOLTAR AO LOBBY</button>
+          <p class="hint-text hidden" id="gameover-guest-wait">Aguardando o Anfitrião iniciar nova partida...</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==================== MODAL: CARTA CORINGA ==================== -->
+  <div id="modal-wildcard" class="modal-overlay hidden">
+    <div class="modal-box glass">
+      <h3>✨ CARTA CORINGA (+18)</h3>
+      <p>Solte a criatividade e escreva sua própria resposta absurda:</p>
+      <textarea id="wildcard-input" maxlength="120" rows="3" placeholder="Escreva algo que vai te mandar direto pro inferno..."></textarea>
+      <div class="modal-actions">
+        <button class="btn btn-outline" id="btn-wildcard-cancel">Cancelar</button>
+        <button class="btn btn-primary" id="btn-wildcard-save">Confirmar Carta</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: QR CODE ==================== -->
+  <div id="modal-qr" class="modal-overlay hidden">
+    <div class="modal-box glass center-text">
+      <h3>📱 ESCANEIE PARA ENTRAR</h3>
+      <p>Aponte a câmera do celular para entrar direto na sala <strong id="qr-room-code"></strong></p>
+      <div class="qr-wrapper">
+        <img id="qr-image" alt="QR Code da Sala" />
+      </div>
+      <button class="btn btn-primary full-width" id="btn-close-qr">Fechar</button>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: REGRAS DO FDP ==================== -->
+  <div id="modal-rules" class="modal-overlay hidden">
+    <div class="modal-box modal-lg glass">
+      <div class="modal-head">
+        <h3>📖 MANUAL OFICIAL DO FDP</h3>
+        <button class="icon-btn-sm" id="btn-close-rules">✖</button>
+      </div>
+      <div class="rules-content">
+        <h4>🎯 Objetivo</h4>
+        <p>Ser a pessoa mais sem limites da mesa. A cada rodada, uma <strong>Carta Preta (Pergunta)</strong> é revelada e os jogadores usam suas <strong>Cartas Brancas (Respostas)</strong> para criar a combinação mais absurda, engraçada ou pesada.</p>
+
+        <h4>🃏 Como Jogar uma Rodada</h4>
+        <ul>
+          <li>Todos começam com <strong>10 cartas brancas</strong> na mão.</li>
+          <li>Um jogador é o <strong>Juiz (FDP da Rodada)</strong>. Ele não joga cartas, apenas julga.</li>
+          <li>Os demais escolhem 1, 2 ou 3 cartas (na ordem das lacunas <code>___</code>). Em cartas de <strong>Escolha 3</strong>, todos compram 2 cartas extras automaticamente (regra oficial <em>Compre 2, Jogue 3</em>).</li>
+          <li>As jogadas chegam embaralhadas e <strong>anônimas</strong> na mesa. O Juiz revela uma a uma em voz alta e escolhe a vencedora (+1 ponto).</li>
+        </ul>
+
+        <h4>🔥 Modos Especiais</h4>
+        <ul>
+          <li><strong>🤖 Rando Cardrissian:</strong> Um bot fantasma joga cartas aleatórias toda rodada. Se o Rando vencer o jogo, todos os humanos perdem na vergonha!</li>
+          <li><strong>🎰 Aposta Arriscada:</strong> Quem tiver ≥ 1 ponto pode apostar 1 ponto para mandar uma <strong>2ª jogada</strong> na mesma rodada. Quem vencer leva todos os pontos do pote!</li>
+          <li><strong>⚔️ Reinado do FDP:</strong> Quem ganha a rodada vira o próximo Juiz.</li>
+          <li><strong>🗳️ Democracia Caótica:</strong> Sem Juiz! Todos jogam e todos votam na melhor resposta.</li>
+          <li><strong>⚡ Modo Relâmpago:</strong> 25 segundos por rodada — dormiu, jogou aleatório!</li>
+          <li><strong>🔄 Troca Tática (Reboot):</strong> Use 1 troca grátis por partida ou gaste 1 ponto para trocar quantas cartas quiser da sua mão.</li>
+          <li><strong>✨ Cartas Coringa:</strong> Cartas em branco para digitar sua própria piada interna na hora!</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: HISTÓRICO / MELHORES MOMENTOS ==================== -->
+  <div id="modal-history" class="modal-overlay hidden">
+    <div class="modal-box modal-lg glass">
+      <div class="modal-head">
+        <h3>🏆 HALL DA VERGONHA (MELHORES MOMENTOS)</h3>
+        <button class="icon-btn-sm" id="btn-close-history">✖</button>
+      </div>
+      <div id="history-list" class="history-list"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
