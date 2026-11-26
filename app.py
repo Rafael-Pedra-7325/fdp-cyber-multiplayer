@@ -7,10 +7,12 @@ import os
 import time
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit, join_room, leave_room
+from werkzeug.middleware.proxy_fix import ProxyFix
 from cards_data import get_deck_stats
 from jogo import FDPRoom, Player, GAME_MODES, AVATARS, generate_room_code
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "fdp-cyber-noir-secret-2026")
 
 socketio = SocketIO(
@@ -40,26 +42,29 @@ def background_timer_loop():
     """Loop global de 1 segundo para cronômetros e limpeza de salas ociosas."""
     while True:
         socketio.sleep(1)
-        now = time.time()
-        to_delete = []
-        for code, room in list(rooms.items()):
-            # Limpa salas vazias ou abandonadas há mais de 2 horas
-            if not room.human_tokens() or (now - room.last_activity > 7200):
-                to_delete.append(code)
-                continue
+        try:
+            now = time.time()
+            to_delete = []
+            for code, room in list(rooms.items()):
+                # Limpa salas vazias ou abandonadas há mais de 2 horas
+                if not room.human_tokens() or (now - room.last_activity > 7200):
+                    to_delete.append(code)
+                    continue
 
-            if room.timer_active:
-                changed = room.tick_timer()
-                if changed:
-                    broadcast_room_state(code)
-                else:
-                    socketio.emit(
-                        "timer_tick",
-                        {"remaining": room.timer_remaining, "active": room.timer_active},
-                        room=code,
-                    )
-        for code in to_delete:
-            rooms.pop(code, None)
+                if room.timer_active:
+                    changed = room.tick_timer()
+                    if changed:
+                        broadcast_room_state(code)
+                    else:
+                        socketio.emit(
+                            "timer_tick",
+                            {"remaining": room.timer_remaining, "active": room.timer_active},
+                            room=code,
+                        )
+            for code in to_delete:
+                rooms.pop(code, None)
+        except Exception:
+            app.logger.exception("Erro no background_timer_loop")
 
 
 def ensure_timer_started():
@@ -394,4 +399,5 @@ def handle_reaction(data):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    socketio.run(app, host="0.0.0.0", port=port, debug=True)
+    debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    socketio.run(app, host="0.0.0.0", port=port, debug=debug)
