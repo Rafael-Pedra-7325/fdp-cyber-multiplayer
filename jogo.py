@@ -78,9 +78,12 @@ def generate_room_code(existing_codes):
 class Player:
     def __init__(self, name, sid, avatar=None, token=None, is_bot=False):
         self.token = token or str(uuid.uuid4())
+        # ID público: é o único identificador enviado aos outros jogadores.
+        # O token (secreto) nunca sai do servidor, exceto para o próprio dono.
+        self.pid = "bot" if is_bot else uuid.uuid4().hex[:10]
         self.sid = sid
         self.name = name.strip()[:18] or "Anônimo"
-        self.avatar = avatar or random.choice(AVATARS)
+        self.avatar = avatar if avatar in AVATARS else random.choice(AVATARS)
         self.hand = []
         self.score = 0
         self.connected = True
@@ -90,7 +93,7 @@ class Player:
 
     def to_public_dict(self, is_host=False, is_judge=False, has_submitted=False, has_voted=False):
         return {
-            "id": self.token,
+            "id": self.pid,
             "name": self.name,
             "avatar": self.avatar,
             "score": self.score,
@@ -108,6 +111,8 @@ class FDPRoom:
     MAX_PLAYERS = 12
     MIN_PLAYERS = 3
     HAND_SIZE = 10
+    HOST_GRACE_SECONDS = 20
+    AFK_GRACE_SECONDS = 20
 
     def __init__(self, code, host_player):
         self.code = code
@@ -159,6 +164,16 @@ class FDPRoom:
     def touch(self):
         self.last_activity = time.time()
 
+    def token_from_pid(self, pid):
+        for t, p in self.players.items():
+            if p.pid == pid:
+                return t
+        return None
+
+    def pid_of(self, token):
+        p = self.players.get(token)
+        return p.pid if p else None
+
     def human_tokens(self):
         return [t for t in self.player_order if t in self.players and not self.players[t].is_bot]
 
@@ -175,7 +190,7 @@ class FDPRoom:
             p.last_seen = time.time()
             if name and name.strip():
                 p.name = name.strip()[:18]
-            if avatar:
+            if avatar in AVATARS:
                 p.avatar = avatar
             return p, True, None
 
@@ -612,7 +627,7 @@ class FDPRoom:
             if w_player:
                 w_player.score += points_awarded
                 winners_payload.append({
-                    "player_id": w_token,
+                    "player_id": w_player.pid,
                     "player_name": w_player.name,
                     "player_avatar": w_player.avatar,
                     "is_bot": w_player.is_bot,
@@ -708,7 +723,7 @@ class FDPRoom:
             winners = self.round_winner_info.get("winners", [])
             human_winners = [w for w in winners if not w["is_bot"]]
             if human_winners:
-                forced_judge = human_winners[0]["player_id"]
+                forced_judge = self.token_from_pid(human_winners[0]["player_id"])
 
         self.start_next_round(advance_judge=(forced_judge is None), forced_judge_token=forced_judge)
         return True, None
@@ -768,6 +783,36 @@ class FDPRoom:
                 return True
         return False
 
+    def maintenance(self, now=None):
+        """Chamado 1x/s. Passa o posto de anfitrião se ele ficar offline e
+        destrava a rodada quando jogadores ficam desconectados por muito tempo.
+        Retorna True se o estado mudou."""
+        now = now or time.time()
+        changed = False
+        humans = [self.players[t] for t in self.human_tokens()]
+        if not humans:
+            return False
+
+        host = self.players.get(self.host_token)
+        if host and not host.connected and now - host.last_seen > self.HOST_GRACE_SECONDS:
+            new_host = next((p for p in humans if p.connected), None)
+            if new_host:
+                self.host_token = new_host.token
+                changed = True
+
+        gone_long = any(
+            (not p.connected) and now - p.last_seen > self.AFK_GRACE_SECONDS for p in humans
+        )
+        if gone_long:
+            before = (self.phase, len(self.submissions), len(self.votes_cast))
+            if self.phase == "playing":
+                self._check_all_submitted()
+            elif self.phase == "voting":
+                self._check_all_voted()
+            if before != (self.phase, len(self.submissions), len(self.votes_cast)):
+                changed = True
+        return changed
+
     def reset_to_lobby(self, requester_token):
         if requester_token != self.host_token:
             return False, "Apenas o anfitrião pode voltar ao Lobby."
@@ -826,8 +871,8 @@ class FDPRoom:
             "round_number": self.round_number,
             "config": self.config,
             "players": players_list,
-            "host_id": self.host_token,
-            "judge_id": self.judge_token,
+            "host_id": self.pid_of(self.host_token),
+            "judge_id": self.pid_of(self.judge_token),
             "judge_name": judge_player.name if judge_player else None,
             "judge_avatar": judge_player.avatar if judge_player else None,
             "current_black_card": self.current_black_card,
@@ -841,7 +886,7 @@ class FDPRoom:
             "game_winner": self.game_winner_info,
             "history": self.history,
             "me": {
-                "id": viewer.token if viewer else None,
+                "id": viewer.pid if viewer else None,
                 "name": viewer.name if viewer else None,
                 "avatar": viewer.avatar if viewer else None,
                 "score": viewer.score if viewer else 0,
