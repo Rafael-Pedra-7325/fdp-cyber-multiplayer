@@ -103,11 +103,11 @@
 
   function escapeHtml(str) {
     return String(str || "")
-      .replace(/&/g, "&")
-      .replace(/</g, "<")
-      .replace(/>/g, ">")
-      .replace(/"/g, """)
-      .replace(/'/g, "'");
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   function getInviteUrl() {
@@ -360,7 +360,7 @@
       div.className = "player-tile" + (p.connected ? "" : " offline");
       div.innerHTML = `
         <div class="player-tile-left">
-          <span style="font-size:1.35rem">${p.avatar}</span>
+          <span style="font-size:1.35rem">${escapeHtml(p.avatar)}</span>
           <div>
             <div class="player-tile-name">${escapeHtml(p.name)} ${p.id === state.me.id ? "(Você)" : ""}</div>
             ${p.is_host ? '<div class="host-crown">👑 Anfitrião</div>' : ""}
@@ -463,7 +463,7 @@
       else if (state.phase === "voting") statusIcon = p.has_voted ? "🗳️" : "⏳";
 
       pill.innerHTML = `
-        <span>${p.avatar}</span>
+        <span>${escapeHtml(p.avatar)}</span>
         <strong>${escapeHtml(p.name)}</strong>
         <span class="score-num">${p.score}</span>
         <span class="status-badge-sm">${statusIcon}</span>
@@ -538,7 +538,7 @@
     // Banner Vencedor da Rodada
     if (state.phase === "round_result" && state.round_winner) {
       const winners = state.round_winner.winners;
-      const names = winners.map((w) => `${w.player_avatar} ${escapeHtml(w.player_name)}`).join(" & ");
+      const names = winners.map((w) => `${escapeHtml(w.player_avatar)} ${escapeHtml(w.player_name)}`).join(" & ");
       const pts = winners[0]?.points_gained || 1;
       banner.classList.remove("hidden");
       banner.innerHTML = `
@@ -586,7 +586,7 @@
         if (state.phase === "round_result") {
           footerHtml = `
             <div class="sub-footer">
-              <span>${sub.author_avatar || ""} <strong>${escapeHtml(sub.author_name || "")}</strong></span>
+              <span>${escapeHtml(sub.author_avatar || "")} <strong>${escapeHtml(sub.author_name || "")}</strong></span>
               <span>${sub.votes_count != null && state.config.mode === "democracia" ? `🗳️ ${sub.votes_count}` : ""} ${isWinner ? "🏆" : ""}</span>
             </div>
           `;
@@ -734,7 +734,7 @@
       const row = document.createElement("div");
       row.className = "rank-row" + (i === 0 ? " top1" : "");
       row.innerHTML = `
-        <span><strong>#${i + 1}</strong> ${r.avatar} ${escapeHtml(r.name)}</span>
+        <span><strong>#${i + 1}</strong> ${escapeHtml(r.avatar)} ${escapeHtml(r.name)}</span>
         <span class="score-num">${r.score} pts</span>
       `;
       list.appendChild(row);
@@ -756,7 +756,7 @@
       <div class="history-item">
         <div class="history-black">Rodada ${h.round}: ${escapeHtml(h.black)}</div>
         <div class="history-white">➜ ${escapeHtml(h.cards.join(" / "))}</div>
-        <div class="history-who">🏆 ${h.avatar} ${escapeHtml(h.winner)}</div>
+        <div class="history-who">🏆 ${escapeHtml(h.avatar)} ${escapeHtml(h.winner)}</div>
       </div>
     `).join("");
   }
@@ -765,7 +765,7 @@
     const el = document.createElement("div");
     el.className = "float-emoji";
     el.style.left = `${10 + Math.random() * 80}%`;
-    el.innerHTML = `<span>${emoji}</span><span class="float-sender">${escapeHtml(sender)}</span>`;
+    el.innerHTML = `<span>${escapeHtml(emoji)}</span><span class="float-sender">${escapeHtml(sender)}</span>`;
     $("reactions-layer").appendChild(el);
     setTimeout(() => el.remove(), 2700);
   }
