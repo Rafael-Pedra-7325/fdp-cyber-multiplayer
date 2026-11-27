@@ -4,6 +4,7 @@ Servidor Flask + Flask-SocketIO para FDP: Edição Cyber-Noir Multiplayer.
 """
 
 import os
+import secrets
 import threading
 import time
 
@@ -18,12 +19,17 @@ ASYNC_MODE = "threading"
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "fdp-cyber-noir-secret-2026")
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+
+# Em produção defina ALLOWED_ORIGINS (ex.: https://seu-app.onrender.com).
+# Várias origens: separe por vírgula. Sem a variável, aceita qualquer origem.
+_origins = os.environ.get("ALLOWED_ORIGINS", "*").strip()
+ALLOWED_ORIGINS = "*" if _origins == "*" else [o.strip() for o in _origins.split(",") if o.strip()]
 
 socketio = SocketIO(
     app,
     async_mode=ASYNC_MODE,
-    cors_allowed_origins="*",
+    cors_allowed_origins=ALLOWED_ORIGINS,
     ping_timeout=60,
     ping_interval=25,
 )
@@ -117,6 +123,8 @@ def background_timer_loop():
                     if not room.human_tokens() or (now - room.last_activity > 7200):
                         to_delete.append(code)
                         continue
+                    if room.maintenance(now):
+                        rooms_to_broadcast.append(code)
                     if room.timer_active:
                         changed = room.tick_timer()
                         if changed:
@@ -171,6 +179,11 @@ def api_meta():
             "avatars": AVATARS,
         }
     )
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return ("", 204)
 
 
 @app.route("/health")
@@ -345,7 +358,7 @@ def handle_kick_player(data):
         room = rooms.get(code)
         if not room or sess["token"] != room.host_token:
             return
-        target_id = (data or {}).get("player_id")
+        target_id = room.token_from_pid((data or {}).get("player_id"))
         if target_id and target_id != room.host_token and target_id in room.players:
             target = room.players[target_id]
             target_sid = target.sid
