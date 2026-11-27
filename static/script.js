@@ -15,6 +15,7 @@
   let savedRoom = localStorage.getItem("fdp_room") || null;
   let pendingUrlSala = new URLSearchParams(window.location.search).get("sala");
   let reconnectPending = false;
+  let connectErrorShown = false;
 
   let selectedIndices = [];       // Ordem das cartas selecionadas para jogar
   let customWildTexts = {};       // index -> texto customizado
@@ -153,6 +154,19 @@
   }
 
   // ==================== INICIALIZAÇÃO ====================
+  async function loadMeta() {
+    try {
+      const res = await fetch("/api/meta");
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      metaData = await res.json();
+      $("meta-total-cards").textContent = metaData.deck_stats.grand_total.toLocaleString("pt-BR");
+      renderAvatarGrid(metaData.avatars);
+      if (state) renderState();
+    } catch (e) {
+      showToast("Conectando ao servidor... aguarde alguns segundos.", true);
+    }
+  }
+
   async function init() {
     const savedName = localStorage.getItem("fdp_name");
     if (savedName) $("input-name").value = savedName;
@@ -161,15 +175,7 @@
 
     $("btn-sound").textContent = soundEnabled ? "🔊" : "🔇";
 
-    try {
-      const res = await fetch("/api/meta");
-      metaData = await res.json();
-      $("meta-total-cards").textContent = metaData.deck_stats.grand_total.toLocaleString("pt-BR");
-      renderAvatarGrid(metaData.avatars);
-      if (state) renderState();
-    } catch (e) {
-      showToast("Erro ao carregar metadados do servidor.", true);
-    }
+    await loadMeta();
 
     if (socket.connected && !state) {
       tryAutoReconnect();
@@ -766,11 +772,21 @@
 
   // ==================== LISTENERS SOCKET.IO ====================
   socket.on("connect", () => {
+    connectErrorShown = false;
+    if (!metaData) loadMeta();
     tryAutoReconnect();
   });
 
   socket.on("disconnect", () => {
     reconnectPending = false;
+  });
+
+  socket.on("connect_error", () => {
+    reconnectPending = false;
+    if (!connectErrorShown) {
+      connectErrorShown = true;
+      showToast("Conectando ao servidor... aguarde alguns segundos.", true);
+    }
   });
 
   socket.on("joined_success", (data) => {
